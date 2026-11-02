@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI MC Admin</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Tajawal:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #f3f0e8;
+            --panel: #ffffff;
+            --line: #e2dccd;
+            --ink: #2b2418;
+            --muted: #85796399;
+            --muted-ink: #857963;
+            --gold: #ad823a;
+            --gold-dark: #8a652a;
+            --go: #1f8a4c;
+            --stop: #c0392b;
+            --warn: #b7791f;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            background: var(--bg);
+            color: var(--ink);
+            font: 14px/1.5 'Inter', system-ui, sans-serif;
+        }
+        button, select, input, textarea { font: inherit; color: inherit; }
+        button {
+            border: 1px solid var(--line);
+            background: #fff;
+            border-radius: 8px;
+            padding: 6px 12px;
+            cursor: pointer;
+        }
+        button:hover:not(:disabled) { border-color: var(--gold); }
+        button:disabled { opacity: .45; cursor: not-allowed; }
+        button.primary { background: var(--gold); border-color: var(--gold); color: #fff; font-weight: 600; }
+        button.go { background: var(--go); border-color: var(--go); color: #fff; font-weight: 700; }
+        button.stop { background: var(--stop); border-color: var(--stop); color: #fff; font-weight: 700; }
+        #talkBtn { font-weight: 700; }
+        #talkBtn.on { background: var(--gold); border-color: var(--gold); color: #fff; }
+        select, input[type=text] {
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            padding: 6px 8px;
+            background: #fff;
+        }
+
+        header {
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 12px 20px;
+            background: var(--panel);
+            border-bottom: 1px solid var(--line);
+        }
+        header h1 { font-size: 16px; margin: 0; }
+        header h1 span { color: var(--gold-dark); }
+        .pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 10px;
+            border-radius: 99px;
+            background: var(--bg);
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--stop); }
+        .dot.ok { background: var(--go); }
+        #nowPlaying { flex: 1; display: flex; align-items: center; gap: 10px; min-width: 0; }
+        #nowText {
+            flex: 1;
+            min-width: 0;
+            overflow: hidden;
+            white-space: nowrap;
+            text-overflow: ellipsis;
+            direction: rtl;
+            font-family: 'Tajawal', sans-serif;
+            color: var(--muted-ink);
+        }
+        #nowText.live { color: var(--go); font-weight: 700; }
+
+        main {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 340px;
+            gap: 20px;
+            padding: 20px;
+            max-width: 1500px;
+            margin: 0 auto;
+        }
+        @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+        h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted-ink); margin: 0 0 10px; }
+        .card {
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            padding: 14px;
+        }
+
+        /* cue list */
+        #cues { display: flex; flex-direction: column; gap: 10px; }
+        .cue { display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 12px; }
+        .cue.selected { border-color: var(--gold); box-shadow: 0 0 0 2px #ad823a33; }
+        .cue.live { border-color: var(--go); box-shadow: 0 0 0 2px #1f8a4c40; }
+        .num {
+            width: 32px; height: 32px;
+            border-radius: 8px;
+            display: grid; place-items: center;
+            background: var(--bg);
+            font-weight: 700;
+            cursor: pointer;
+        }
+        .cue.selected .num { background: var(--gold); color: #fff; }
+        textarea {
+            width: 100%;
+            min-height: 64px;
+            resize: vertical;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            padding: 8px 10px;
+            direction: rtl;
+            font-family: 'Tajawal', sans-serif;
+            font-size: 16px;
+            line-height: 1.6;
+            background: #fffdf8;
+        }
+        textarea:focus, select:focus, input:focus { outline: 2px solid #ad823a55; border-color: var(--gold); }
+        .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
+        .row .spacer { flex: 1; }
+        .status { font-size: 12px; font-weight: 600; }
+        .status.ready { color: var(--go); }
+        .status.busy { color: var(--gold-dark); }
+        .status.stale, .status.none { color: var(--warn); }
+        .status.error { color: var(--stop); }
+        .icon { padding: 6px 9px; }
+
+        #addBox textarea { min-height: 80px; }
+
+        /* sidebar */
+        aside { display: flex; flex-direction: column; gap: 16px; }
+        #preview {
+            width: 100%;
+            aspect-ratio: 16 / 9;
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            display: block;
+            background: #000;
+        }
+        .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+        .field label { font-size: 12px; font-weight: 600; color: var(--muted-ink); }
+        .color-row { display: flex; gap: 8px; align-items: center; }
+        .color-row input[type=color] { width: 44px; height: 34px; padding: 0; border: 1px solid var(--line); border-radius: 8px; background: none; }
+        .color-row input[type=text] { width: 110px; font-family: ui-monospace, monospace; text-transform: uppercase; }
+        .color-row input.bad { border-color: var(--stop); }
+        .swatches { display: flex; gap: 6px; }
+        .swatch { width: 22px; height: 22px; border-radius: 6px; border: 1px solid #0003; cursor: pointer; padding: 0; }
+        .hint { font-size: 12px; color: var(--muted-ink); }
+        kbd { background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; font-size: 11px; }
+        #toast {
+            position: fixed;
+            bottom: 20px; left: 50%;
+            transform: translateX(-50%);
+            background: var(--ink);
+            color: #fff;
+            padding: 8px 16px;
+            border-radius: 8px;
+            opacity: 0;
+            transition: opacity .3s;
+            pointer-events: none;
+        }
+        #toast.on { opacity: 1; }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>AI MC <span>Admin</span></h1>
+        <span class="pill" title="Show pages connected"><span id="showDot" class="dot"></span><span id="showCount">No show screen</span></span>
+        <div id="nowPlaying">
+            <span id="nowText">Idle</span>
+            <button class="go" id="goBtn" title="Play the selected line on the show (Space)">▶ GO</button>
+            <button class="stop" id="stopBtn" title="Stop the show audio (Esc)">■ STOP</button>
+            <button id="talkBtn" title="Hold the orb in its speaking animation, with or without audio (T)">◉ Speaking anim: OFF</button>
+        </div>
+        <a href="/show" target="_blank"><button>Open show ↗</button></a>
+    </header>
+
+    <main>
+        <section>
+            <h2>Script</h2>
+            <div id="cues"></div>
+
+            <div class="card" id="addBox" style="margin-top:14px">
+                <h2>Add a phrase</h2>
+                <textarea id="newText" placeholder="اكتب جملة المساعد الذكي هنا…"></textarea>
+                <div class="row">
+                    <select id="newVoice"></select>
+                    <select id="newStyle"></select>
+                    <span class="spacer"></span>
+                    <button id="addBtn">Add</button>
+                    <button class="primary" id="addGenBtn">Add &amp; generate voice</button>
+                </div>
+            </div>
+            <p class="hint">
+                <kbd>Space</kbd> play selected line on the show and select the next ·
+                <kbd>Esc</kbd> stop · <kbd>T</kbd> toggle speaking animation · <kbd>↑</kbd><kbd>↓</kbd> change selection.
+                Always preview generated audio before the show: the voice model can occasionally drift from the text.
+            </p>
+        </section>
+
+        <aside>
+            <div class="card">
+                <h2>Show preview</h2>
+                <iframe id="preview" src="/show?preview" title="Show preview"></iframe>
+                <p class="hint" style="margin:8px 0 0">Muted thumbnail of what the show screen displays.</p>
+            </div>
+
+            <div class="card">
+                <h2>Show settings</h2>
+                <div class="field">
+                    <label for="bgHex">Background (chroma key)</label>
+                    <div class="color-row">
+                        <input type="color" id="bgPick">
+                        <input type="text" id="bgHex" maxlength="7" spellcheck="false">
+                        <div class="swatches">
+                            <button class="swatch" data-bg="#00FF00" style="background:#00ff00" title="Green"></button>
+                            <button class="swatch" data-bg="#00B140" style="background:#00b140" title="Broadcast green"></button>
+                            <button class="swatch" data-bg="#0047BB" style="background:#0047bb" title="Blue"></button>
+                            <button class="swatch" data-bg="#000000" style="background:#000" title="Black (screen blend / LED)"></button>
+                        </div>
+                    </div>
+                </div>
+                <div class="field">
+                    <label for="orbHex">Orb colour</label>
+                    <div class="color-row">
+                        <input type="color" id="orbPick">
+                        <input type="text" id="orbHex" maxlength="7" spellcheck="false">
+                        <div class="swatches">
+                            <button class="swatch" data-orb="#8C7650" style="background:#8c7650" title="Original gold"></button>
+                            <button class="swatch" data-orb="#D4A853" style="background:#d4a853" title="Bright gold"></button>
+                            <button class="swatch" data-orb="#FFFFFF" style="background:#fff" title="White"></button>
+                        </div>
+                    </div>
+                </div>
+                <div class="field">
+                    <label for="orbScale">Orb size <span id="orbScaleVal"></span></label>
+                    <input type="range" id="orbScale" min="0.4" max="2" step="0.05">
+                </div>
+                <div class="field">
+                    <label><input type="checkbox" id="captions"> Show captions under the orb</label>
+                </div>
+                <div class="field">
+                    <label>Default voice / style (lines set to "default")</label>
+                    <div class="row" style="margin:0">
+                        <select id="defVoice"></select>
+                        <select id="defStyle"></select>
+                    </div>
+                </div>
+                <div class="field">
+                    <label for="speed">Voice speed <span id="speedVal"></span> (applies to newly generated lines)</label>
+                    <input type="range" id="speed" min="0.5" max="1.5" step="0.025">
+                </div>
+            </div>
+        </aside>
+    </main>
+    <div id="toast"></div>
+
+    <script>
+        let S = null;            // last full state from the server
+        let selected = null;     // selected cue id
+        const $ = (id) => document.getElementById(id);
+        const HEX = /^#[0-9a-f]{6}$/i;
+
+        function toast(msg) {
+            $('toast').textContent = msg;
+            $('toast').classList.add('on');
+            clearTimeout(toast.t);
+            toast.t = setTimeout(() => $('toast').classList.remove('on'), 2500);
+        }
+
+        async function api(method, url, body) {
+            const opts = { method, headers: {} };
+            if (body instanceof FormData) opts.body = body;
+            else if (body !== undefined) {
+                opts.headers['Content-Type'] = 'application/json';
+                opts.body = JSON.stringify(body);
+            }
+            const r = await fetch(url, opts);
+            if (!r.ok) {
+                const text = await r.text();
+                const m = text.match(/<p>(.*?)<\/p>/s);
+                throw new Error(m ? m[1] : r.statusText);
+            }
+            return r.status === 204 ? null : r.json();
+        }
+        const run = (p) => p.catch(err => toast(err.message));
+
+        function esc(s) {
+            return String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+        }
+
+        function voiceOptions(sel, withDefault) {
+            const opts = withDefault ? [`<option value="">voice: default</option>`] : [];
+            for (const [v, g] of Object.entries(S.voices)) {
+                opts.push(`<option value="${v}" ${v === sel ? 'selected' : ''}>${v} (${g})</option>`);
+            }
+            return opts.join('');
+        }
+        function styleOptions(sel, withDefault) {
+            const opts = withDefault ? [`<option value="">style: default</option>`] : [];
+            for (const s of S.styles) opts.push(`<option value="${s}" ${s === sel ? 'selected' : ''}>${s}</option>`);
+            return opts.join('');
+        }
+
+        // ---------------- cue list ----------------
+        function cueStatus(c) {
+            const g = S.generating[c.id];
+            if (g === 'busy') return ['busy', 'Generating voice…'];
+            if (g) return ['error', g];
+            if (!c.audio) return ['none', 'No audio yet'];
+            if (c.audio_text !== c.text) return ['stale', 'Text changed since generating, regenerate'];
+            const dur = c.duration ? ` · ${c.duration}s` : '';
+            return ['ready', `Ready${dur} · ${c.audio_voice || ''}`];
+        }
+
+        function renderCues() {
+            // Keep whatever is being typed across re-renders.
+            const active = document.activeElement;
+            const keep = active && active.dataset && active.dataset.cue
+                ? { id: active.dataset.cue, field: active.dataset.field, value: active.value,
+                    start: active.selectionStart, end: active.selectionEnd }
+                : null;
+
+            const live = S.now_playing && S.now_playing.id;
+            $('cues').innerHTML = S.cues.map((c, i) => {
+                const [cls, label] = cueStatus(c);
+                const busy = S.generating[c.id] === 'busy';
+                return `
+                <div class="card cue ${c.id === selected ? 'selected' : ''} ${c.id === live ? 'live' : ''}" data-id="${c.id}">
+                    <div class="num" data-act="select" title="Select">${i + 1}</div>
+                    <div>
+                        <textarea data-cue="${c.id}" data-field="text">${esc(c.text)}</textarea>
+                        <div class="row">
+                            <select data-cue="${c.id}" data-field="voice">${voiceOptions(c.voice, true)}</select>
+                            <select data-cue="${c.id}" data-field="style">${styleOptions(c.style, true)}</select>
+                            <span class="status ${cls}">${esc(label)}</span>
+                            <span class="spacer"></span>
+                            <button data-act="generate" ${busy ? 'disabled' : ''}>${c.audio ? '↻ Regenerate' : '✦ Generate'}</button>
+                            <button data-act="preview" ${c.audio ? '' : 'disabled'} title="Listen here, not on the show">🎧 Preview</button>
+                            <button data-act="upload" title="Use your own recording (wav/mp3)">⤒</button>
+                            <button class="icon" data-act="up" title="Move up" ${i === 0 ? 'disabled' : ''}>↑</button>
+                            <button class="icon" data-act="down" title="Move down" ${i === S.cues.length - 1 ? 'disabled' : ''}>↓</button>
+                            <button class="icon" data-act="delete" title="Delete">✕</button>
+                            <button class="go" data-act="play" ${c.audio ? '' : 'disabled'}>▶ Play on show</button>
+                        </div>
+                    </div>
+                </div>`;
+            }).join('') || '<div class="card hint">No phrases yet. Add one below.</div>';
+
+            if (keep) {
+                const el = document.querySelector(`[data-cue="${keep.id}"][data-field="${keep.field}"]`);
+                if (el) {
+                    el.value = keep.value;
+                    el.focus();
+                    if (keep.start != null) el.setSelectionRange(keep.start, keep.end);
+                }
+            }
+            fillMissingDurations();
+        }
+
+        // Uploaded files have no duration until a browser reads them.
+        function fillMissingDurations() {
+            for (const c of S.cues) {
+                if (c.audio && !c.duration && !fillMissingDurations.seen.has(c.audio)) {
+                    fillMissingDurations.seen.add(c.audio);
+                    const a = new Audio('/audio/' + c.audio);
+                    a.addEventListener('loadedmetadata', () =>
+                        api('POST', `/api/cues/${c.id}/duration`, { duration: a.duration }).catch(() => {}));
+                }
+            }
+        }
+        fillMissingDurations.seen = new Set();
+
+        const previewPlayer = new Audio();
+
+        $('cues').addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-act]');
+            const card = e.target.closest('.cue');
+            if (!card) return;
+            const id = card.dataset.id;
+            if (!btn) { select(id); return; }
+            const idx = S.cues.findIndex(c => c.id === id);
+            const cue = S.cues[idx];
+            switch (btn.dataset.act) {
+                case 'select': select(id); break;
+                case 'generate': run(saveText(id).then(() => api('POST', `/api/cues/${id}/generate`))); break;
+                case 'preview':
+                    if (!previewPlayer.paused && previewPlayer.dataset.id === id) { previewPlayer.pause(); break; }
+                    previewPlayer.src = '/audio/' + cue.audio;
+                    previewPlayer.dataset.id = id;
+                    previewPlayer.play();
+                    break;
+                case 'upload': pickUpload(id); break;
+                case 'up':
+                case 'down': {
+                    const ids = S.cues.map(c => c.id);
+                    const j = btn.dataset.act === 'up' ? idx - 1 : idx + 1;
+                    [ids[idx], ids[j]] = [ids[j], ids[idx]];
+                    run(api('POST', '/api/cues/reorder', { ids }));
+                    break;
+                }
+                case 'delete':
+                    if (confirm('Delete this line and its audio?')) run(api('DELETE', `/api/cues/${id}`));
+                    break;
+                case 'play': playCue(id); break;
+            }
+        });
+
+        // Save edits: text after a pause in typing / on blur, selects on change.
+        const pending = {};
+        function saveText(id) {
+            const el = document.querySelector(`textarea[data-cue="${id}"]`);
+            clearTimeout(pending[id]);
+            const cue = S.cues.find(c => c.id === id);
+            if (!el || !cue || el.value.trim() === cue.text) return Promise.resolve();
+            cue.text = el.value.trim();
+            return api('PATCH', `/api/cues/${id}`, { text: cue.text });
+        }
+        $('cues').addEventListener('input', (e) => {
+            const id = e.target.dataset.cue;
+            if (e.target.tagName === 'TEXTAREA' && id) {
+                clearTimeout(pending[id]);
+                pending[id] = setTimeout(() => run(saveText(id)), 800);
+            }
+        });
+        $('cues').addEventListener('focusout', (e) => {
+            if (e.target.tagName === 'TEXTAREA' && e.target.dataset.cue) run(saveText(e.target.dataset.cue));
+        });
+        $('cues').addEventListener('change', (e) => {
+            const { cue, field } = e.target.dataset;
+            if (e.target.tagName === 'SELECT' && cue) run(api('PATCH', `/api/cues/${cue}`, { [field]: e.target.value }));
+        });
+
+        function pickUpload(id) {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.wav,.mp3,.m4a,.ogg,.aac,audio/*';
+            input.onchange = () => {
+                if (!input.files[0]) return;
+                const fd = new FormData();
+                fd.append('file', input.files[0]);
+                run(api('POST', `/api/cues/${id}/upload`, fd).then(() => toast('Audio uploaded')));
+            };
+            input.click();
+        }
+
+        function select(id) {
+            selected = id;
+            document.querySelectorAll('.cue').forEach(el => el.classList.toggle('selected', el.dataset.id === id));
+            const el = document.querySelector(`.cue[data-id="${id}"]`);
+            if (el) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
+
+        function playCue(id) {
+            const cue = S.cues.find(c => c.id === id);
+            if (cue && cue.audio && cue.audio_text !== cue.text &&
+                !confirm('The text was edited after the voice was generated. Play the old audio anyway?')) return;
+            run(api('POST', `/api/play/${id}`).then(r => {
+                if (!r.shows) toast('Sent, but no show screen is connected');
+            }));
+            select(id);
+        }
+
+        function go() {
+            if (!selected) { if (S.cues[0]) select(S.cues[0].id); else return; }
+            const idx = S.cues.findIndex(c => c.id === selected);
+            playCue(selected);
+            if (S.cues[idx + 1]) select(S.cues[idx + 1].id);
+        }
+        const stop = () => run(api('POST', '/api/stop'));
+        $('goBtn').onclick = go;
+        $('stopBtn').onclick = stop;
+        const toggleTalk = () => saveSetting({ force_speak: !S.settings.force_speak });
+        $('talkBtn').onclick = toggleTalk;
+
+        document.addEventListener('keydown', (e) => {
+            if (e.target.closest('textarea, input, select')) return;
+            const idx = S ? S.cues.findIndex(c => c.id === selected) : -1;
+            if (e.code === 'Space') { e.preventDefault(); go(); }
+            else if (e.key === 'Escape') { e.preventDefault(); stop(); }
+            else if (e.key === 't' || e.key === 'T') { e.preventDefault(); toggleTalk(); }
+            else if (e.key === 'ArrowDown' && S.cues[idx + 1]) { e.preventDefault(); select(S.cues[idx + 1].id); }
+            else if (e.key === 'ArrowUp' && idx > 0) { e.preventDefault(); select(S.cues[idx - 1].id); }
+        });
+
+        // ---------------- add phrase ----------------
+        async function addPhrase(generate) {
+            const text = $('newText').value.trim();
+            if (!text) { $('newText').focus(); return; }
+            const cue = await api('POST', '/api/cues', { text, voice: $('newVoice').value, style: $('newStyle').value });
+            $('newText').value = '';
+            if (generate) await api('POST', `/api/cues/${cue.id}/generate`);
+        }
+        $('addBtn').onclick = () => run(addPhrase(false));
+        $('addGenBtn').onclick = () => run(addPhrase(true));
+
+        // ---------------- settings ----------------
+        function renderSettings() {
+            const s = S.settings;
+            if (document.activeElement !== $('bgHex')) $('bgHex').value = s.bg.toUpperCase();
+            if (document.activeElement !== $('orbHex')) $('orbHex').value = s.orb_color.toUpperCase();
+            $('bgPick').value = s.bg.toLowerCase();
+            $('orbPick').value = s.orb_color.toLowerCase();
+            $('orbScale').value = s.orb_scale;
+            $('orbScaleVal').textContent = `×${Number(s.orb_scale).toFixed(2)}`;
+            $('captions').checked = s.captions;
+            $('talkBtn').classList.toggle('on', !!s.force_speak);
+            $('talkBtn').textContent = `◉ Speaking anim: ${s.force_speak ? 'ON' : 'OFF'}`;
+            $('defVoice').innerHTML = voiceOptions(s.voice, false);
+            $('defStyle').innerHTML = styleOptions(s.style, false);
+            if (document.activeElement !== $('speed')) $('speed').value = s.speed;
+            $('speedVal').textContent = `×${Number($('speed').value).toFixed(3)}`;
+        }
+        const saveSetting = (fields) => run(api('POST', '/api/settings', fields));
+
+        function bindColor(pick, hex, key) {
+            pick.addEventListener('input', () => {
+                hex.value = pick.value.toUpperCase();
+                hex.classList.remove('bad');
+                saveSetting({ [key]: pick.value });
+            });
+            hex.addEventListener('input', () => {
+                let v = hex.value.trim();
+                if (v && v[0] !== '#') v = '#' + v;
+                const ok = HEX.test(v);
+                hex.classList.toggle('bad', !ok && v.length >= 7);
+                if (ok) { pick.value = v.toLowerCase(); saveSetting({ [key]: v }); }
+            });
+        }
+        bindColor($('bgPick'), $('bgHex'), 'bg');
+        bindColor($('orbPick'), $('orbHex'), 'orb_color');
+        document.querySelectorAll('[data-bg]').forEach(b => b.onclick = () => saveSetting({ bg: b.dataset.bg }));
+        document.querySelectorAll('[data-orb]').forEach(b => b.onclick = () => saveSetting({ orb_color: b.dataset.orb }));
+        $('orbScale').addEventListener('input', () => {
+            $('orbScaleVal').textContent = `×${Number($('orbScale').value).toFixed(2)}`;
+            saveSetting({ orb_scale: parseFloat($('orbScale').value) });
+        });
+        $('captions').onchange = () => saveSetting({ captions: $('captions').checked });
+        $('defVoice').onchange = () => saveSetting({ voice: $('defVoice').value });
+        $('defStyle').onchange = () => saveSetting({ style: $('defStyle').value });
+        $('speed').addEventListener('input', () => {
+            $('speedVal').textContent = `×${Number($('speed').value).toFixed(3)}`;
+        });
+        // Save once on release, not on every step of the drag.
+        $('speed').onchange = () => saveSetting({ speed: parseFloat($('speed').value) });
+
+        // ---------------- header ----------------
+        function renderShows() {
+            $('showDot').classList.toggle('ok', S.shows > 0);
+            $('showCount').textContent = S.shows ? `${S.shows} show screen${S.shows > 1 ? 's' : ''}` : 'No show screen';
+        }
+        function renderNow() {
+            const np = S.now_playing;
+            const cue = np && S.cues.find(c => c.id === np.id);
+            const idx = cue ? S.cues.indexOf(cue) + 1 : 0;
+            $('nowText').textContent = cue ? `● ON AIR  #${idx}  ${cue.text}` : 'Idle';
+            $('nowText').classList.toggle('live', !!cue);
+            document.querySelectorAll('.cue').forEach(el => el.classList.toggle('live', !!np && el.dataset.id === np.id));
+        }
+
+        // ---------------- live link ----------------
+        function connect() {
+            const es = new EventSource('/api/events?role=admin');
+            es.onmessage = (e) => {
+                const msg = JSON.parse(e.data);
+                if (msg.type === 'hello' || msg.type === 'cues') {
+                    const first = !S;
+                    S = msg.state;
+                    if (first) {
+                        $('newVoice').innerHTML = voiceOptions('', true);
+                        $('newStyle').innerHTML = styleOptions('', true);
+                    }
+                    if (selected && !S.cues.some(c => c.id === selected)) selected = null;
+                    renderCues(); renderSettings(); renderShows(); renderNow();
+                } else if (msg.type === 'settings' && S) {
+                    S.settings = msg.settings; renderSettings();
+                } else if (msg.type === 'presence' && S) {
+                    S.shows = msg.shows; renderShows();
+                } else if (msg.type === 'now_playing' && S) {
+                    S.now_playing = msg.now_playing; renderNow();
+                }
+            };
+            es.onerror = () => { $('showCount').textContent = 'Server offline'; $('showDot').classList.remove('ok'); };
+        }
+        connect();
+    </script>
+</body>
+</html>

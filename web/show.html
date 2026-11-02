@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI MC Show</title>
+    <!-- Local copy first so the venue needs no internet; CDN as fallback -->
+    <script src="/static/three.min.js"></script>
+    <script>window.THREE || document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"><\/script>')</script>
+    <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@500;700&display=swap" rel="stylesheet">
+    <style>
+        html, body {
+            margin: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: var(--bg, #00ff00);
+            cursor: none;
+        }
+        #orbCanvas {
+            position: absolute;
+            inset: 0;
+            width: 100vw;
+            height: 100vh;
+            display: block;
+        }
+        /* Spoken line under the orb (toggle in the admin panel) */
+        #caption {
+            position: absolute;
+            left: 50%;
+            bottom: 7vh;
+            transform: translateX(-50%);
+            width: min(80vw, 1400px);
+            text-align: center;
+            direction: rtl;
+            font-family: 'Tajawal', sans-serif;
+            font-weight: 700;
+            font-size: clamp(20px, 3.2vh, 44px);
+            line-height: 1.5;
+            color: #fff;
+            text-shadow: 0 2px 6px rgba(0,0,0,0.6);
+            opacity: 0;
+            transition: opacity 0.6s ease;
+        }
+        #caption.on { opacity: 1; }
+        /* Video orb (USE_VIDEO_ORB): sized and moved from JS to sit where the dot orb would */
+        #videoOrb {
+            position: absolute; left: 0; top: 0;
+            pointer-events: none; transform-origin: center;
+        }
+        #videoOrb video {
+            position: absolute; inset: 0; width: 100%; height: 100%;
+            opacity: 0; transition: opacity .6s ease;
+        }
+        #videoOrb video.on { opacity: 1; }
+        /* Browsers block sound until the page is clicked once; OBS does not. */
+        #arm {
+            position: absolute;
+            inset: 0;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            background: rgba(0,0,0,0.75);
+            color: #fff;
+            font: 600 22px/1.6 'Tajawal', sans-serif;
+            text-align: center;
+            cursor: pointer;
+            z-index: 5;
+        }
+        #arm.on { display: flex; }
+        #offline {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #c0392b;
+            display: none;
+        }
+        #offline.on { display: block; }
+    </style>
+</head>
+<body>
+    <canvas id="orbCanvas"></canvas>
+    <div id="videoOrb"></div>
+    <div id="caption"></div>
+    <div id="offline" title="disconnected from the MC server"></div>
+    <div id="arm">اضغط هنا لتفعيل الصوت<br><span style="font-size:15px;opacity:.7">Click once to enable audio</span></div>
+
+    <script>
+        // true: the orb is the pre-rendered video loops in orb_video/ (same as the
+        // nominees orb); false: the Three.js dot orb below. Both keep the same drift and pulse.
+        const USE_VIDEO_ORB = true;
+        const VIDEO_ORB = {
+            clips: {
+                idle:  '/static/orb_video/orb2.webm',   // waiting: the calmest loop
+                speak: '/static/orb_video/orb1.webm'    // a line is playing: the liveliest loop
+            },
+            fill: 0.9   // share of the video frame the orb itself spans
+        };
+
+        const CONFIG = {
+            radius: 2.3,          // orb radius (world units)
+            idleMoveSpeed: 0.5,   // slow floating drift
+            idleMoveRange: 0.5,
+            rings: 120,           // dot rows pole to pole
+            segments: 240,        // dots around each row
+            dotSize: 6.0,         // dot diameter in px at 1080p
+            colDot:  0x8c7650,    // muted gold
+            colFold: 0x6b5734     // darker gold in the folds
+        };
+
+        const canvas = document.getElementById('orbCanvas');
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.z = 6.5;
+        // render() normally does this; the video orb never renders but still projects
+        camera.updateMatrixWorld();
+
+        const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+        const pixelRatio = Math.min(window.devicePixelRatio, 2);
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(pixelRatio);
+        renderer.setClearColor(0x000000, 0);
+
+        // Ashima 3D simplex noise
+        const NOISE_GLSL = `
+            vec3 mod289(vec3 x){return x-floor(x*(1.0/289.0))*289.0;}
+            vec4 mod289(vec4 x){return x-floor(x*(1.0/289.0))*289.0;}
+            vec4 permute(vec4 x){return mod289(((x*34.0)+1.0)*x);}
+            vec4 taylorInvSqrt(vec4 r){return 1.79284291400159-0.85373472095314*r;}
+            float snoise(vec3 v){
+                const vec2 C=vec2(1.0/6.0,1.0/3.0); const vec4 D=vec4(0.0,0.5,1.0,2.0);
+                vec3 i=floor(v+dot(v,C.yyy)); vec3 x0=v-i+dot(i,C.xxx);
+                vec3 g=step(x0.yzx,x0.xyz); vec3 l=1.0-g;
+                vec3 i1=min(g.xyz,l.zxy); vec3 i2=max(g.xyz,l.zxy);
+                vec3 x1=x0-i1+C.xxx; vec3 x2=x0-i2+C.yyy; vec3 x3=x0-D.yyy;
+                i=mod289(i);
+                vec4 p=permute(permute(permute(i.z+vec4(0.0,i1.z,i2.z,1.0))+i.y+vec4(0.0,i1.y,i2.y,1.0))+i.x+vec4(0.0,i1.x,i2.x,1.0));
+                float n_=0.142857142857; vec3 ns=n_*D.wyz-D.xzx;
+                vec4 j=p-49.0*floor(p*ns.z*ns.z);
+                vec4 x_=floor(j*ns.z); vec4 y_=floor(j-7.0*x_);
+                vec4 x=x_*ns.x+ns.yyyy; vec4 y=y_*ns.x+ns.yyyy; vec4 h=1.0-abs(x)-abs(y);
+                vec4 b0=vec4(x.xy,y.xy); vec4 b1=vec4(x.zw,y.zw);
+                vec4 s0=floor(b0)*2.0+1.0; vec4 s1=floor(b1)*2.0+1.0; vec4 sh=-step(h,vec4(0.0));
+                vec4 a0=b0.xzyw+s0.xzyw*sh.xxyy; vec4 a1=b1.xzyw+s1.xzyw*sh.zzww;
+                vec3 p0=vec3(a0.xy,h.x); vec3 p1=vec3(a0.zw,h.y); vec3 p2=vec3(a1.xy,h.z); vec3 p3=vec3(a1.zw,h.w);
+                vec4 norm=taylorInvSqrt(vec4(dot(p0,p0),dot(p1,p1),dot(p2,p2),dot(p3,p3)));
+                p0*=norm.x; p1*=norm.y; p2*=norm.z; p3*=norm.w;
+                vec4 m=max(0.6-vec4(dot(x0,x0),dot(x1,x1),dot(x2,x2),dot(x3,x3)),0.0); m=m*m;
+                return 42.0*dot(m*m,vec4(dot(p0,x0),dot(p1,x1),dot(p2,x2),dot(p3,x3)));
+            }`;
+
+        // ---------------- Orb: a latitude/longitude grid of dots on a sphere ----------------
+        // Same orb as the MBRGEA nominees kiosk (web/orb.html).
+        const dotCount = (CONFIG.rings - 1) * CONFIG.segments;
+        const dotPos = new Float32Array(dotCount * 3);
+        let k = 0;
+        for (let r = 1; r < CONFIG.rings; r++) {
+            const lat = Math.PI * r / CONFIG.rings;
+            for (let s = 0; s < CONFIG.segments; s++) {
+                const lon = 2 * Math.PI * s / CONFIG.segments;
+                dotPos[k++] = Math.sin(lat) * Math.cos(lon);
+                dotPos[k++] = Math.cos(lat);
+                dotPos[k++] = Math.sin(lat) * Math.sin(lon);
+            }
+        }
+        const dotGeo = new THREE.BufferGeometry();
+        dotGeo.setAttribute('position', new THREE.BufferAttribute(dotPos, 3));
+
+        const orbUniforms = {
+            uFlow:   { value: 0 },                 // integrated fold-motion time
+            uEnergy: { value: 0 },                 // 0 idle .. 1 speaking (eased, not waveform)
+            uPulse:  { value: 0 },                 // 0..1 rhythmic throb while speaking
+            uRing:   { value: 0 },                 // 0 centre .. 1 rim, ripple spreading outward
+            uSize:   { value: 0 },
+            uColDot: { value: new THREE.Color(CONFIG.colDot) },
+            uColFold:{ value: new THREE.Color(CONFIG.colFold) }
+        };
+
+        const orbMat = new THREE.ShaderMaterial({
+            uniforms: orbUniforms,
+            transparent: true,
+            depthTest: false,
+            depthWrite: false,
+            // premultiplied "over", so the dot edges composite cleanly onto the CSS background
+            blending: THREE.CustomBlending,
+            blendEquation: THREE.AddEquation,
+            blendSrc: THREE.OneFactor,
+            blendDst: THREE.OneMinusSrcAlphaFactor,
+            blendSrcAlpha: THREE.OneFactor,
+            blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
+            vertexShader: NOISE_GLSL + `
+                uniform float uFlow, uEnergy, uPulse, uRing, uSize;
+                varying float vAlpha;
+                varying float vFold;
+                void main() {
+                    vec3 n = position;                              // unit sphere
+                    float facing = normalize(normalMatrix * n).z;   // 1 facing camera, 0 at the silhouette
+                    float rim = 1.0 - clamp(facing, 0.0, 1.0);
+
+                    // Cloth folds: low-frequency noise plus ridges, strongest near the rim
+                    vec3 q = n * 1.05 + vec3(0.0, uFlow * 0.3, uFlow * 0.18);
+                    float f = snoise(q) + 0.3 * snoise(q * 2.3 + 3.7);
+                    float ridge = 1.0 - abs(f);
+                    ridge *= ridge;
+                    float amp = mix(0.01, 0.15, pow(rim, 1.5)) * (1.0 + uEnergy * 0.7);
+                    float d = (f * 0.6 + ridge * 0.4) * amp;
+
+                    // Speaking: a ripple runs from the centre out to the edge on each beat
+                    float fromCentre = acos(clamp(facing, -1.0, 1.0)) / 1.5708;
+                    d += exp(-pow((fromCentre - uRing) * 6.0, 2.0)) * uEnergy * (0.025 + uPulse * 0.03);
+
+                    // Sideways sway so neighbouring rows slide over each other in the folds
+                    vec3 c = cross(n, vec3(0.0, 1.0, 0.0));
+                    vec3 tang = c / max(length(c), 1e-3);
+                    vec3 bitang = cross(n, tang);
+                    vec3 p = n * (1.0 + d)
+                           + (tang * snoise(q * 0.7 + 9.1) + bitang * snoise(q * 0.7 - 4.3)) * amp * 1.1;
+
+                    vec4 mv = modelViewMatrix * vec4(p, 1.0);
+                    // smaller dots toward the poles, where every row has the same count
+                    float poleShrink = mix(0.35, 1.0, smoothstep(0.0, 0.35, length(n.xz)));
+                    gl_PointSize = uSize * poleShrink * (6.5 / -mv.z);
+                    gl_Position = projectionMatrix * mv;
+
+                    vAlpha = smoothstep(-0.12, 0.06, facing);       // hide the back half
+                    vFold = clamp(ridge * rim * 1.4, 0.0, 1.0);
+                }`,
+            fragmentShader: `
+                uniform vec3 uColDot, uColFold;
+                varying float vAlpha;
+                varying float vFold;
+                void main() {
+                    float d = length(gl_PointCoord - 0.5);
+                    float a = smoothstep(0.5, 0.36, d) * vAlpha;
+                    if (a < 0.01) discard;
+                    vec3 col = mix(uColDot, uColFold, vFold);
+                    gl_FragColor = vec4(col * a, a);
+                }`
+        });
+
+        const orb = new THREE.Group();
+        scene.add(orb);
+        const orbMesh = new THREE.Points(dotGeo, orbMat);
+        orbMesh.scale.setScalar(CONFIG.radius);
+        orb.add(orbMesh);
+
+        let orbScale = 1;
+        function updateDotSize() {
+            orbUniforms.uSize.value = CONFIG.dotSize * orbScale * pixelRatio * (window.innerHeight / 1080);
+        }
+        updateDotSize();
+
+        // ---------------- settings from the admin panel ----------------
+        const caption = document.getElementById('caption');
+        let captionsOn = false;
+        let forceSpeak = false;   // admin toggle: speaking animation without audio
+
+        function applySettings(s) {
+            if (/^#[0-9a-f]{6}$/i.test(s.bg || '')) {
+                document.documentElement.style.setProperty('--bg', s.bg);
+            }
+            if (/^#[0-9a-f]{6}$/i.test(s.orb_color || '')) {
+                const c = new THREE.Color(s.orb_color);
+                orbUniforms.uColDot.value.copy(c);
+                orbUniforms.uColFold.value.copy(c).multiplyScalar(0.76);  // folds a shade darker
+            }
+            orbScale = Math.max(0.2, Math.min(3, parseFloat(s.orb_scale) || 1));
+            orbMesh.scale.setScalar(CONFIG.radius * orbScale);
+            updateDotSize();
+            forceSpeak = !!s.force_speak;
+            captionsOn = !!s.captions;
+            if (!captionsOn) caption.classList.remove('on');
+        }
+
+        // ---------------- audio: plays here, and drives the orb ----------------
+        // ?preview is the admin panel's thumbnail: muted, not counted as a show screen.
+        const PREVIEW = new URLSearchParams(location.search).has('preview');
+        const player = new Audio();
+        player.preload = 'auto';
+        player.muted = PREVIEW;
+        let audioCtx = null, analyser = null, samples = null;
+        const arm = document.getElementById('arm');
+
+        function ensureAudio() {
+            if (PREVIEW) return;
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const src = audioCtx.createMediaElementSource(player);
+                analyser = audioCtx.createAnalyser();
+                analyser.fftSize = 1024;
+                samples = new Float32Array(analyser.fftSize);
+                src.connect(analyser);
+                analyser.connect(audioCtx.destination);
+            }
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            arm.classList.toggle('on', audioCtx.state !== 'running');
+        }
+        arm.addEventListener('click', ensureAudio);
+        document.addEventListener('keydown', ensureAudio);
+        ensureAudio();
+        if (audioCtx) audioCtx.onstatechange = () => arm.classList.toggle('on', audioCtx.state !== 'running');
+
+        let currentId = null;
+        function report(state) {
+            if (PREVIEW) return;
+            fetch('/api/show-status', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ state, id: currentId, duration: player.duration || 0 })
+            }).catch(() => {});
+        }
+
+        function play(msg) {
+            ensureAudio();
+            currentId = msg.id;
+            player.src = msg.url;
+            caption.textContent = msg.text || '';
+            player.play().then(() => {
+                if (captionsOn) caption.classList.add('on');
+                report('playing');
+            }).catch(err => {
+                console.warn('play blocked', err);
+                if (!PREVIEW) arm.classList.add('on');
+            });
+        }
+        function stop() {
+            player.pause();
+            player.removeAttribute('src');
+            player.load();
+            caption.classList.remove('on');
+            report('stopped');
+        }
+        player.addEventListener('ended', () => {
+            caption.classList.remove('on');
+            report('ended');
+        });
+
+        // RMS of the current audio block, 0..1
+        function audioLevel() {
+            if (player.paused) return 0;
+            if (!analyser) return 1;   // preview: muted, so just "speaking while playing"
+            analyser.getFloatTimeDomainData(samples);
+            let sum = 0;
+            for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
+            return Math.min(1, Math.sqrt(sum / samples.length) * 6);
+        }
+
+        // ---------------- link to app.py ----------------
+        const offline = document.getElementById('offline');
+        function connect() {
+            const es = new EventSource('/api/events?role=' + (PREVIEW ? 'preview' : 'show'));
+            es.onopen = () => offline.classList.remove('on');
+            es.onerror = () => offline.classList.add('on');   // EventSource retries by itself
+            es.onmessage = (e) => {
+                const msg = JSON.parse(e.data);
+                if (msg.type === 'hello') applySettings(msg.state.settings);
+                else if (msg.type === 'settings') applySettings(msg.settings);
+                else if (msg.type === 'play') play(msg);
+                else if (msg.type === 'stop') stop();
+            };
+        }
+        connect();
+
+        // ---------------- video orb: one loop per state, cross-faded ----------------
+        const videoOrb = document.getElementById('videoOrb');
+        const clips = {};
+        let clipState = null;
+        if (USE_VIDEO_ORB) {
+            canvas.style.display = 'none';
+            for (const [state, src] of Object.entries(VIDEO_ORB.clips)) {
+                const v = document.createElement('video');
+                v.muted = true; v.loop = true; v.playsInline = true;
+                // hidden clips rest once faded out, so only one decodes at a time
+                v.addEventListener('transitionend', () => { if (!v.classList.contains('on')) v.pause(); });
+                // loaded whole into memory, so the loop never goes back to the network
+                fetch(src).then(r => r.blob()).then(b => {
+                    v.src = URL.createObjectURL(new Blob([b], { type: 'video/webm' }));
+                    if (state === clipState) v.play().catch(() => {});
+                }).catch(() => {});
+                videoOrb.appendChild(v);
+                clips[state] = v;
+            }
+        } else {
+            videoOrb.remove();
+        }
+        function showClip(state) {
+            if (state === clipState) return;
+            clipState = state;
+            for (const [s, v] of Object.entries(clips)) {
+                v.classList.toggle('on', s === state);
+                if (s === state && v.src) v.play().catch(() => {});
+            }
+        }
+
+        // ---------------- animation ----------------
+        let speaking = false;
+        let lastVoiceAt = -1e9;   // hold "speaking" across short gaps between words
+        let energy = 0;
+        let beatPhase = 0;
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const dt = Math.min(clock.getDelta(), 0.05);
+            const time = clock.elapsedTime;
+            const now = performance.now();
+
+            if (audioLevel() > 0.05) lastVoiceAt = now;
+            speaking = forceSpeak || now - lastVoiceAt < 600;
+            // slow, smooth state transition (~1 s), independent of syllables
+            energy += ((speaking ? 1 : 0) - energy) * (1 - Math.exp(-dt * 2.2));
+
+            // Gentle drift across screen
+            const idleX = Math.sin(time * CONFIG.idleMoveSpeed * 0.4) * CONFIG.idleMoveRange;
+            const idleY = Math.cos(time * CONFIG.idleMoveSpeed * 0.3) * (CONFIG.idleMoveRange * 0.5);
+            orb.position.x = THREE.MathUtils.lerp(orb.position.x, idleX, 0.02);
+            orb.position.y = THREE.MathUtils.lerp(orb.position.y, idleY, 0.02);
+
+            // Slow turn of the dot grid; breathing scale
+            orbMesh.rotation.y += dt * (0.05 + energy * 0.04);
+            orbMesh.rotation.x = Math.sin(time * 0.11) * 0.15;
+            const breathe = 0.5 + 0.5 * Math.sin(time * 0.9);
+            // Speaking throb: ~1.7 beats/s with a slow tempo wobble so it doesn't feel mechanical
+            beatPhase += dt * Math.PI * 2 * (1.7 + 0.25 * Math.sin(time * 0.7));
+            const beat = Math.pow(0.5 + 0.5 * Math.sin(beatPhase), 2.5);
+            const pulse = energy * beat;
+            orb.scale.setScalar(1 + breathe * 0.012 + energy * 0.015 + pulse * 0.04);
+            orbUniforms.uPulse.value = pulse;
+            orbUniforms.uRing.value = ((beatPhase / (Math.PI * 2)) + 0.25) % 1;
+
+            orbUniforms.uFlow.value += dt * (0.12 + energy * 0.22);
+            orbUniforms.uEnergy.value = energy;
+
+            if (USE_VIDEO_ORB) {
+                showClip(speaking ? 'speak' : 'idle');
+                // the frame is sized so the orb inside it matches the dot orb's diameter
+                const proj = orb.position.clone().project(camera);
+                const halfH = Math.tan(camera.fov * Math.PI / 360) * camera.position.z;
+                const size = CONFIG.radius * orbScale / halfH * window.innerHeight / VIDEO_ORB.fill;
+                const cx = (1 + proj.x) * window.innerWidth / 2;
+                const cy = (1 - proj.y) * window.innerHeight / 2;
+                videoOrb.style.width = videoOrb.style.height = `${size}px`;
+                videoOrb.style.transform =
+                    `translate(${cx - size / 2}px, ${cy - size / 2}px) scale(${orb.scale.x})`;
+            } else {
+                renderer.render(scene, camera);
+            }
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            updateDotSize();
+        });
+
+        animate();
+    </script>
+</body>
+</html>

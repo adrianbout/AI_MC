@@ -1,0 +1,11 @@
+# Admin + show web server (Server-Sent Events push to the show page).
+flask>=3,<4
+
+# Realtime voices used to pre-generate each MC line (client.realtime.connect).
+openai>=3.3.1,<4
+
+# Required at runtime by openai's realtime client; not installed by `openai` alone.
+websockets>=13,<17
+
+# Loads .env (endpoint, key, deployment).
+python-dotenv>=1.0,<2
